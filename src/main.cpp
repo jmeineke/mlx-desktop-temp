@@ -75,35 +75,20 @@ void drawStatic() {
 void drawObject(float f) {
   num.fillSprite(BG);
   String s = String(f, 1);
-  // pick largest size where everything fits in sprite width
-  int sz = 2;
-  num.setTextSize(sz);
-  int gap = sz * 14;
-  int wn = num.textWidth(s, 7);
-  int wf = num.textWidth("F", 4);
-  if (wn + gap + wf + 20 > SPR_W) {
-    sz = 1; gap = 14;
-    num.setTextSize(sz);
-    wn = num.textWidth(s, 7);
-    wf = num.textWidth("F", 4);
-  }
 
-  int total = wn + gap + wf;
-  int x = (SPR_W - total) / 2;
-  int yTop = (SPR_H - (sz == 2 ? 96 : 48)) / 2;
+  num.setTextSize(1);
+  int wn = num.textWidth(s, 8);          // font 8 = 75px digits
+  int wf = num.textWidth("F", 4);
+  int gap = 16;
+  int x = (SPR_W - (wn + gap + wf)) / 2;
+  int yTop = (SPR_H - 75) / 2;
 
   num.setTextDatum(TL_DATUM);
   num.setTextColor(TFT_WHITE, BG);
-  num.drawString(s, x, yTop, 7);
-
-  num.setTextSize(1);
-  num.setTextColor(TFT_WHITE, BG);
-  num.drawString("F", x + wn + gap, yTop + (sz == 2 ? 48 : 16), 4);
-  int rSz = sz == 2 ? 8 : 5;
-  int dx = x + wn + (sz == 2 ? 14 : 9);
-  int dy = yTop + (sz == 2 ? 16 : 10);
-  num.fillCircle(dx, dy, rSz, TFT_WHITE);
-  num.fillCircle(dx, dy, rSz - 3, BG);
+  num.drawString(s, x, yTop, 8);
+  num.drawString("F", x + wn + gap, yTop + 30, 4);
+  num.fillCircle(x + wn + 10, yTop + 22, 6, TFT_WHITE);
+  num.fillCircle(x + wn + 10, yTop + 22, 3, BG);
 
   num.pushSprite(SPR_X, SPR_Y);
 }
