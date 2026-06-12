@@ -46,29 +46,48 @@ VSCode + PlatformIO IDE extension. Open folder, Build (✓), Upload (→).
   other one or set `upload_port` explicitly.
 - **`ModuleNotFoundError: No module named 'intelhex'`:** PlatformIO penv was broken.
   Fix: `C:/Python313/python.exe -m pip install intelhex`.
-- **White/blank screen:** backlight GPIO21 must be driven HIGH in code; check rotation.
+- **White/blank screen:** the backlight on GPIO21 must be enabled in code (this
+  project uses LEDC PWM); also check the display rotation.
 - **Ghosting text:** always pass a bg color to `setTextColor(fg, bg)`.
+
+## Garage Door Alerts
+
+Polls `http://garage.local/status` (a local-network endpoint, resolved via mDNS)
+every 2 s over WiFi. The poll runs in a FreeRTOS task pinned to core 0 so the
+blocking HTTP request never stalls the temperature display on core 1.
+
+When a door is open, a thin red bar appears at the top of the screen showing the
+door name in white text. When both doors are open, the bar splits into two
+side-by-side halves, one per door. The bar disappears when both doors are closed.
+
+Door names come from the JSON payload (`single.name` / `double.name`), so the
+labels follow whatever the garage endpoint reports. The expected shape is:
+
+```json
+{"single":{"name":"Joe's door","open":false},
+ "double":{"name":"Elaine's door","open":false}}
+```
+
+WiFi credentials and the poll URL are set via `#define` at the top of
+[src/main.cpp](src/main.cpp). Set `DEBUG_DOOR1_OPEN` / `DEBUG_DOOR2_OPEN` to `true`
+to force the bar on for testing without opening a real door.
 
 ## Firmware
 
-[src/main.cpp](src/main.cpp) — init sensor + display, then loop reads object/ambient
-temp in °F (every 250 ms) and updates the UI only when a value changes. Display-only
-(no touch).
+[src/main.cpp](src/main.cpp) — initializes the sensor, display, and touch, connects
+to WiFi, and starts the garage-polling task. The main loop reads object/ambient
+temperature in °F and updates the UI only when a value changes.
 
-UI: large 7-segment object temperature that color-codes by value
-(blue <60 / green <85 / orange <99 / red ≥99 °F), degree symbols, and an ambient
-panel. The big number is rendered via a `TFT_eSprite` for flicker-free updates.
-Requires `LOAD_FONT7` in build flags for the 7-segment font.
+UI: a large object temperature (TFT_eSPI font 8) with degree symbols, and an
+ambient panel below it. The big number is rendered via a `TFT_eSprite` for
+flicker-free updates. Requires `LOAD_FONT8` in the build flags for the large digits
+(`LOAD_FONT2` / `LOAD_FONT4` cover the smaller labels).
 
-Backlight dims to ~8% (`BL_DIM=20`) after `DIM_TIMEOUT` ms (default 15 s) of no
-touch. Any touch restores full brightness. Uses ESP32 LEDC PWM on GPIO21.
-Touch uses XPT2046 on VSPI (CLK=25, MISO=39, MOSI=32, CS=33) — wake only.
-A touch is counted when XPT2046 Z pressure exceeds `TOUCH_Z_MIN` (100); below
-that is electrical noise.
-
-**Init order matters:** TFT_eSPI defaults to the VSPI port, so `tft.init()` must
-run *before* the touch `SPI.begin()/ts.begin()`. Init touch last or `tft.init()`
-clobbers the touch pin config — symptom: touch Z stuck at 4095.
+The backlight (ESP32 LEDC PWM on GPIO21) only turns on when there's something
+worth showing: either a garage door is open, or the object temperature is above
+`TEMP_ON` (85 °F). It turns back off once both doors are closed and the temperature
+drops below `TEMP_OFF` (84 °F) — the 1 °F gap is hysteresis to prevent flicker near
+the threshold. When on, brightness is `BL_LEVEL`.
 
 Readings are smoothed with a rolling **trimmed mean**: the sensor is sampled fast
 (`SAMPLE_MS`, 50 ms) into a ring buffer (`WIN`, 20 samples = 1 s window); each
