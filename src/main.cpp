@@ -4,186 +4,181 @@
 #include <XPT2046_Touchscreen.h>
 #include <SPI.h>
 
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite num = TFT_eSprite(&tft);
-Adafruit_MLX90614 mlx = Adafruit_MLX90614();
-
-#define TOUCH_CS   33
-#define TOUCH_CLK  25
-#define TOUCH_MISO 39
-#define TOUCH_MOSI 32
-XPT2046_Touchscreen ts(TOUCH_CS);
-
-// --- backlight PWM ---
+// --- hardware pins ---
+#define TOUCH_CS    33
+#define TOUCH_CLK   25
+#define TOUCH_MISO  39
+#define TOUCH_MOSI  32
 #define BL_PIN      21
 #define BL_CHANNEL  0
-#define BL_BRIGHT   255
-#define BL_DIM      10          // dim amount (0-255)
-#define DIM_TIMEOUT 15000       // ms of no touch before dim
 
-uint32_t lastTouch = 0;
-bool isDimmed = false;
+// --- settings ---
+#define BL_BRIGHT    255          // backlight full (0-255)
+#define BL_DIM       10           // backlight dim (0-255)
+#define DIM_TIMEOUT  15000        // ms idle before dim
+#define TOUCH_Z_MIN  100          // minimum Z to count as a real touch
+#define SAMPLE_MS    50           // sensor sample interval
+#define DRAW_MS      250          // display refresh interval
+#define WIN          20           // rolling average window size
 
-void setBrightness(uint8_t v) { ledcWrite(BL_CHANNEL, v); }
+// --- colors (RGB565) ---
+#define BG    0x0861   // dark navy
+#define PANEL 0x18E3   // dark grey
+#define MUTED 0x8C71   // grey label text
 
-// --- palette (RGB565) ---
-#define BG      0x0861   // near-black navy
-#define PANEL   0x18E3   // dark grey panel
-#define DIM     0x8C71   // muted grey text
+TFT_eSPI           tft;
+TFT_eSprite        spr(&tft);
+Adafruit_MLX90614  mlx;
+XPT2046_Touchscreen ts(TOUCH_CS);
 
-// big-number sprite geometry
-#define SPR_W   320
-#define SPR_H   140
-#define SPR_X   0
-#define SPR_Y   24
+float objBuf[WIN], ambBuf[WIN];
+int   bufIdx  = 0;
+bool  bufFull = false;
 
-// rolling-average filter
-#define WIN        20         // samples in window (20 * 50ms = 1s)
-#define SAMPLE_MS  50         // sensor sample period
-#define DRAW_MS    250        // display refresh period
+float lastObj = -999;
+float lastAmb = -999;
 
-float bufObj[WIN], bufAmb[WIN];
-int   bIdx = 0;
-bool  bFull = false;
+uint32_t lastTouchTime = 0;
+bool     dimmed        = false;
 
-float lastObj = -999, lastAmb = -999; // last drawn
+// --- helpers ---
 
-// trimmed mean: drop the single lowest + highest sample, average the rest
-float trimmedMean(const float *b, int n) {
-  if (n <= 0) return NAN;
-  if (n < 4) {                         // too few to trim, plain mean
-    float s = 0; for (int i = 0; i < n; i++) s += b[i];
-    return s / n;
+void setBrightness(uint8_t v) {
+  ledcWrite(BL_CHANNEL, v);
+}
+
+float trimmedMean(const float *buf, int n) {
+  if (n < 4) {
+    float sum = 0;
+    for (int i = 0; i < n; i++) sum += buf[i];
+    return sum / n;
   }
-  float mn = b[0], mx = b[0], sum = 0;
+  float mn = buf[0], mx = buf[0], sum = 0;
   for (int i = 0; i < n; i++) {
-    sum += b[i];
-    if (b[i] < mn) mn = b[i];
-    if (b[i] > mx) mx = b[i];
+    sum += buf[i];
+    if (buf[i] < mn) mn = buf[i];
+    if (buf[i] > mx) mx = buf[i];
   }
   return (sum - mn - mx) / (n - 2);
 }
 
+// --- drawing ---
 
-void drawStatic() {
+void drawBackground() {
   tft.fillScreen(BG);
-
-  // ambient panel shell
   tft.fillRoundRect(20, 186, 280, 44, 10, PANEL);
 }
 
-void drawObject(float f) {
-  num.fillSprite(BG);
-  String s = String(f, 1);
+void drawObjectTemp(float f) {
+  spr.fillSprite(BG);
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(TFT_WHITE, BG);
 
-  num.setTextSize(1);
-  int wn = num.textWidth(s, 8);          // font 8 = 75px digits
-  int wf = num.textWidth("F", 4);
-  int gap = 16;
-  int x = (SPR_W - (wn + gap + wf)) / 2;
-  int yTop = (SPR_H - 75) / 2;
+  String val = String(f, 1);
+  int numW  = spr.textWidth(val, 8);
+  int unitW = spr.textWidth("F", 4);
+  int gap   = 16;
+  int x     = (320 - (numW + gap + unitW)) / 2;
+  int y     = (140 - 75) / 2;
 
-  num.setTextDatum(TL_DATUM);
-  num.setTextColor(TFT_WHITE, BG);
-  num.drawString(s, x, yTop, 8);
-  num.drawString("F", x + wn + gap, yTop + 30, 4);
-  num.fillCircle(x + wn + 10, yTop + 22, 6, TFT_WHITE);
-  num.fillCircle(x + wn + 10, yTop + 22, 3, BG);
+  spr.drawString(val, x, y, 8);
+  spr.drawString("F", x + numW + gap, y + 30, 4);
+  spr.fillCircle(x + numW + 10, y + 22, 6, TFT_WHITE);
+  spr.fillCircle(x + numW + 10, y + 22, 3, BG);
 
-  num.pushSprite(SPR_X, SPR_Y);
+  spr.pushSprite(0, 24);
 }
 
-void drawAmbient(float f) {
+void drawAmbientTemp(float f) {
   tft.fillRoundRect(20, 186, 280, 44, 10, PANEL);
-
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(DIM, PANEL);
+
+  tft.setTextColor(MUTED, PANEL);
   tft.drawString("AMBIENT", 40, 208, 4);
 
-  // right-aligned value with degree symbol, using cursor advance
-  String s = String(f, 1);
-  int wv = tft.textWidth(s, 4);
-  int wf = tft.textWidth("F", 4);
-  int xEnd = 280;                        // right inset
-  int x = xEnd - (wv + 16 + wf);
-  tft.setTextDatum(ML_DATUM);
+  String val = String(f, 1);
+  int valW  = tft.textWidth(val, 4);
+  int unitW = tft.textWidth("F", 4);
+  int x     = 280 - (valW + 16 + unitW);
+
   tft.setTextColor(TFT_WHITE, PANEL);
-  tft.drawString(s, x, 208, 4);
-  tft.fillCircle(x + wv + 6, 200, 3, TFT_WHITE);
-  tft.fillCircle(x + wv + 6, 200, 1, PANEL);
-  tft.drawString("F", x + wv + 14, 208, 4);
+  tft.drawString(val, x, 208, 4);
+  tft.fillCircle(x + valW + 6, 200, 3, TFT_WHITE);
+  tft.fillCircle(x + valW + 6, 200, 1, PANEL);
+  tft.drawString("F", x + valW + 14, 208, 4);
 }
+
+// --- setup ---
 
 void setup() {
   Serial.begin(115200);
 
-  ledcSetup(BL_CHANNEL, 5000, 8);   // channel, freq, resolution
+  ledcSetup(BL_CHANNEL, 5000, 8);
   ledcAttachPin(BL_PIN, BL_CHANNEL);
   setBrightness(BL_BRIGHT);
-  lastTouch = millis();
+  lastTouchTime = millis();
 
-  Wire.begin(22, 27);           // SDA=22, SCL=27
-  delay(250);                   // sensor needs time to wake after power-on
-  bool ok = mlx.begin();
+  Wire.begin(22, 27);
+  delay(250);
+  bool sensorOk = mlx.begin();
 
-  tft.init();                   // TFT first — it grabs the VSPI port
-  tft.setRotation(1);           // landscape 320x240
-  num.createSprite(SPR_W, SPR_H);
+  tft.init();                    // TFT must init before touch — both share VSPI
+  tft.setRotation(1);
+  spr.createSprite(320, 140);
 
-  // touch SPI last, so its VSPI pin config survives
   SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   ts.begin();
   ts.setRotation(1);
 
-  drawStatic();
+  drawBackground();
 
-  if (!ok) {
-    Serial.println("MLX90614 not found");
+  if (!sensorOk) {
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(0xF800, BG);
+    tft.setTextColor(TFT_RED, BG);
     tft.drawString("SENSOR NOT FOUND", 160, 120, 4);
+    Serial.println("MLX90614 not found");
   }
 }
+
+// --- loop ---
 
 void loop() {
   uint32_t now = millis();
 
-  // touch → wake / reset dim timer (Z threshold filters ghost touches)
-  #define TOUCH_Z_MIN 100
-  static uint32_t tTouch = 0;
-  bool touched = false;
-  if (now - tTouch >= 50) {
-    tTouch = now;
-    touched = (ts.getPoint().z > TOUCH_Z_MIN);
+  // backlight dim / wake on touch
+  static uint32_t lastTouchPoll = 0;
+  if (now - lastTouchPoll >= 50) {
+    lastTouchPoll = now;
+    if (ts.getPoint().z > TOUCH_Z_MIN) {
+      lastTouchTime = now;
+      if (dimmed) { setBrightness(BL_BRIGHT); dimmed = false; }
+    }
   }
-  if (touched) {
-    lastTouch = now;
-    if (isDimmed) { setBrightness(BL_BRIGHT); isDimmed = false; }
-  } else if (!isDimmed && (now - lastTouch >= DIM_TIMEOUT)) {
+  if (!dimmed && (now - lastTouchTime >= DIM_TIMEOUT)) {
     setBrightness(BL_DIM);
-    isDimmed = true;
+    dimmed = true;
   }
 
-  static uint32_t tSample = 0, tDraw = 0;
-
-  // fast sampling into ring buffer
-  if (now - tSample >= SAMPLE_MS) {
-    tSample = now;
-    bufObj[bIdx] = mlx.readObjectTempF();
-    bufAmb[bIdx] = mlx.readAmbientTempF();
-    bIdx++;
-    if (bIdx >= WIN) { bIdx = 0; bFull = true; }
+  // collect sensor samples into rolling buffer
+  static uint32_t lastSample = 0;
+  if (now - lastSample >= SAMPLE_MS) {
+    lastSample = now;
+    objBuf[bufIdx] = mlx.readObjectTempF();
+    ambBuf[bufIdx] = mlx.readAmbientTempF();
+    bufIdx++;
+    if (bufIdx >= WIN) { bufIdx = 0; bufFull = true; }
   }
 
-  // slower display refresh from the averaged window
-  if (now - tDraw >= DRAW_MS) {
-    tDraw = now;
-    int n = bFull ? WIN : bIdx;
+  // redraw display from averaged buffer
+  static uint32_t lastDraw = 0;
+  if (now - lastDraw >= DRAW_MS) {
+    lastDraw = now;
+    int n = bufFull ? WIN : bufIdx;
     if (n > 0) {
-      float obj = trimmedMean(bufObj, n);
-      float amb = trimmedMean(bufAmb, n);
-      if (fabs(obj - lastObj) >= 0.1f) { drawObject(obj); lastObj = obj; }
-      if (fabs(amb - lastAmb) >= 0.1f) { drawAmbient(amb); lastAmb = amb; }
+      float obj = trimmedMean(objBuf, n);
+      float amb = trimmedMean(ambBuf, n);
+      if (fabs(obj - lastObj) >= 0.1f) { drawObjectTemp(obj); lastObj = obj; }
+      if (fabs(amb - lastAmb) >= 0.1f) { drawAmbientTemp(amb); lastAmb = amb; }
     }
   }
 }
