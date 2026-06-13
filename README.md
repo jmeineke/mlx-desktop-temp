@@ -1,8 +1,8 @@
 # MLX Desktop Temp
 
 IR temperature readout on a CYD (Cheap Yellow Display). Reads an MLX90614-DCI
-non-contact IR sensor over I2C and shows object + ambient temperature in °F on
-the display.
+non-contact IR sensor over I2C and shows the object temperature in °F on the
+display.
 
 ## Hardware
 
@@ -78,10 +78,9 @@ to force the bar on for testing without opening a real door.
 to WiFi, and starts the garage-polling task. The main loop reads object/ambient
 temperature in °F and updates the UI only when a value changes.
 
-UI: a large object temperature (TFT_eSPI font 8) with degree symbols, and an
-ambient panel below it. The big number is rendered via a `TFT_eSprite` for
-flicker-free updates. Requires `LOAD_FONT8` in the build flags for the large digits
-(`LOAD_FONT2` / `LOAD_FONT4` cover the smaller labels).
+UI: a large object temperature (TFT_eSPI font 8) with a degree symbol, rendered via
+a `TFT_eSprite` for flicker-free updates. Requires `LOAD_FONT8` in the build flags
+for the large digits (`LOAD_FONT2` / `LOAD_FONT4` cover the smaller labels).
 
 The backlight (ESP32 LEDC PWM on GPIO21) only turns on when there's something
 worth showing: either a garage door is open, or the object temperature is above

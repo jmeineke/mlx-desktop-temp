@@ -1,10 +1,14 @@
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
 #include <TFT_eSPI.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
+#include "driver/gpio.h"
+#include "esp_sleep.h"
 
 // --- debug overrides (set to true to test display without opening doors) ---
 #define DEBUG_DOOR1_OPEN false
@@ -13,40 +17,46 @@
 // --- wifi + garage ---
 #define WIFI_SSID    "MNet"
 #define WIFI_PASS    "1121121121abc"
-#define GARAGE_URL   "http://garage.local/status"
+#define GARAGE_HOST  "garage"        // mDNS hostname (resolves garage.local)
+#define GARAGE_PATH  "/status"
 #define GARAGE_MS    2000    // poll interval
 
 // --- hardware pins ---
-#define BL_PIN      21
-#define BL_CHANNEL  0
+#define BL_PIN        21
+#define BL_CHANNEL    0
+#define TOUCH_CS      33
+#define TOUCH_IRQ     36
+#define TOUCH_CLK     25
+#define TOUCH_MISO    39
+#define TOUCH_MOSI    32
 
 // --- settings ---
-#define BL_LEVEL     60          // backlight brightness when on
-#define TEMP_ON      85.0f       // object temp (F) that turns the display on
-#define TEMP_OFF     84.0f       // ...and the lower bound that turns it back off (hysteresis)
+#define BL_LEVEL          60
+#define TOUCH_Z_MIN       100
+#define TOUCH_DEBOUNCE_MS 500
 #define SAMPLE_MS    50
 #define DRAW_MS      250
 #define WIN          20
 
 // --- colors (RGB565) ---
 #define BG    0x0861
-#define PANEL 0x18E3
-#define MUTED 0x8C71
 
 // --- door alert bar geometry ---
-#define BAR_H   20    // height of alert bar at top of screen
+#define BAR_H   32    // height of alert bar at top of screen
 #define BAR_Y   0
-#define SPR_Y   (BAR_H + 4)   // temp sprite starts below bar
+#define SPR_H_PX 140                              // temp sprite height
+#define SPR_Y   (BAR_H + (240 - BAR_H - SPR_H_PX) / 2)  // center sprite below bar
 
 TFT_eSPI          tft;
 TFT_eSprite       spr(&tft);
 Adafruit_MLX90614 mlx;
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
-float objBuf[WIN], ambBuf[WIN];
+volatile bool garageReady = false;
+float objBuf[WIN];
 int   bufIdx  = 0;
 bool  bufFull = false;
 float lastObj = -999;
-float lastAmb = -999;
 
 struct Door {
   bool   open;
@@ -79,67 +89,38 @@ float trimmedMean(const float *buf, int n) {
 
 void drawBackground() {
   tft.fillScreen(BG);
-  tft.fillRoundRect(20, 186, 280, 44, 10, PANEL);
 }
 
 // Draw the door alert bar at the top. Called whenever door state changes.
 void drawDoorBar() {
-  tft.fillRect(0, BAR_Y, 320, BAR_H, BG);  // clear bar area
-
-  if (!doors[0].open && !doors[1].open) return;
-
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_RED);
-
-  if (doors[0].open && doors[1].open) {
-    tft.fillRect(0,   BAR_Y, 157, BAR_H, TFT_RED);
-    tft.fillRect(163, BAR_Y, 157, BAR_H, TFT_RED);
-    tft.drawString(doors[0].name, 80,  BAR_Y + BAR_H / 2, 2);
-    tft.drawString(doors[1].name, 240, BAR_Y + BAR_H / 2, 2);
-  } else {
-    const String &name = doors[0].open ? doors[0].name : doors[1].name;
-    tft.fillRect(0, BAR_Y, 320, BAR_H, TFT_RED);
-    tft.drawString(name, 160, BAR_Y + BAR_H / 2, 2);
+  for (int i = 0; i < 2; i++) {
+    int x = i * 163;
+    int w = (i == 0) ? 157 : 157;
+    uint16_t color = doors[i].open ? TFT_RED : TFT_DARKGREEN;
+    tft.fillRect(x, BAR_Y, w, BAR_H, color);
+    tft.setTextColor(TFT_WHITE, color);
+    tft.drawString(doors[i].name, x + w / 2, BAR_Y + BAR_H / 2, 2);
   }
+  tft.fillRect(157, BAR_Y, 6, BAR_H, BG);  // gap between doors
 }
 
 void drawObjectTemp(float f) {
+  uint16_t col = (f > 122) ? TFT_RED : (f >= 115) ? TFT_GREEN : TFT_BLUE;
   spr.fillSprite(BG);
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(TFT_WHITE, BG);
+  spr.setTextColor(col, BG);
 
   String val  = String(f, 1);
   int    numW = spr.textWidth(val, 8);
-  int    unitW= spr.textWidth("F", 4);
-  int    gap  = 16;
-  int    x    = (320 - (numW + gap + unitW)) / 2;
-  int    y    = (140 - 75) / 2;
+  int    x    = (320 - numW) / 2;
+  int    y    = (SPR_H_PX - spr.fontHeight(8)) / 2;
 
   spr.drawString(val, x, y, 8);
-  spr.drawString("F", x + numW + gap, y + 30, 4);
-  spr.fillCircle(x + numW + 10, y + 22, 6, TFT_WHITE);
-  spr.fillCircle(x + numW + 10, y + 22, 3, BG);
+  spr.fillCircle(x + numW + 10, y + 6, 6, col);
+  spr.fillCircle(x + numW + 10, y + 6, 3, BG);
 
   spr.pushSprite(0, SPR_Y);
-}
-
-void drawAmbientTemp(float f) {
-  tft.fillRoundRect(20, 186, 280, 44, 10, PANEL);
-  tft.setTextDatum(ML_DATUM);
-
-  tft.setTextColor(MUTED, PANEL);
-  tft.drawString("AMBIENT", 40, 208, 4);
-
-  String val  = String(f, 1);
-  int    valW = tft.textWidth(val, 4);
-  int    unitW= tft.textWidth("F", 4);
-  int    x    = 280 - (valW + 16 + unitW);
-
-  tft.setTextColor(TFT_WHITE, PANEL);
-  tft.drawString(val, x, 208, 4);
-  tft.fillCircle(x + valW + 6, 200, 3, TFT_WHITE);
-  tft.fillCircle(x + valW + 6, 200, 1, PANEL);
-  tft.drawString("F", x + valW + 14, 208, 4);
 }
 
 // --- garage polling (runs on core 0, main loop on core 1) ---
@@ -150,8 +131,10 @@ void garageTask(void *) {
       doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door" };
       doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door" };
     } else if (WiFi.status() == WL_CONNECTED) {
+      IPAddress ip = MDNS.queryHost(GARAGE_HOST);
+      if (ip == IPAddress((uint32_t)0)) { vTaskDelay(pdMS_TO_TICKS(GARAGE_MS)); continue; }
       HTTPClient http;
-      http.begin(GARAGE_URL);
+      http.begin("http://" + ip.toString() + GARAGE_PATH);
       int code = http.GET();
       if (code == 200) {
         JsonDocument doc;
@@ -160,6 +143,7 @@ void garageTask(void *) {
           doors[1].open = doc["double"]["open"].as<bool>();
           doors[0].name = doc["single"]["name"] | "Door 1";
           doors[1].name = doc["double"]["name"] | "Door 2";
+          garageReady = true;
         }
       }
       http.end();
@@ -175,7 +159,7 @@ void setup() {
 
   ledcSetup(BL_CHANNEL, 5000, 8);
   ledcAttachPin(BL_PIN, BL_CHANNEL);
-  ledcWrite(BL_CHANNEL, 0);      // start off; loop turns it on when a door opens or temp is high
+  ledcWrite(BL_CHANNEL, BL_LEVEL);
 
   Wire.begin(22, 27);
   delay(250);
@@ -183,7 +167,15 @@ void setup() {
 
   tft.init();
   tft.setRotation(1);
-  spr.createSprite(320, 140);
+  spr.createSprite(320, SPR_H_PX);
+
+  // touch must init AFTER tft.init() — TFT_eSPI uses VSPI and clobbers touch pins otherwise
+  SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+  ts.begin();
+  ts.setRotation(1);
+
+  gpio_wakeup_enable(GPIO_NUM_36, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
 
   drawBackground();
 
@@ -211,20 +203,27 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
-  // redraw bar if door state changed (updated by garageTask on core 0)
-  if (doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen) {
+  // touch: toggle sleep on press
+  static uint32_t lastTouchMs = 0;
+  if (ts.tirqTouched() && ts.touched()) {
+    TS_Point p = ts.getPoint();
+    if (p.z >= TOUCH_Z_MIN && now - lastTouchMs > TOUCH_DEBOUNCE_MS) {
+      lastTouchMs = now;
+      ledcWrite(BL_CHANNEL, 0);
+      esp_light_sleep_start();           // blocks until TIRQ wakes us
+      ledcWrite(BL_CHANNEL, BL_LEVEL);
+      lastTouchMs = millis();            // debounce the wake touch
+      lastObj = -999;                    // force temp redraw on wake
+    }
+  }
+
+  // redraw bar once garage data is available, then on state change
+  static bool barDrawn = false;
+  if (garageReady && (!barDrawn || doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen)) {
     drawDoorBar();
     doors[0].lastOpen = doors[0].open;
     doors[1].lastOpen = doors[1].open;
-  }
-
-  // backlight: on when a door is open or object temp is high (hysteresis on temp)
-  static bool blOn = false;
-  bool tempHot = blOn ? (lastObj > TEMP_OFF) : (lastObj > TEMP_ON);
-  bool wantOn  = doors[0].open || doors[1].open || tempHot;
-  if (wantOn != blOn) {
-    ledcWrite(BL_CHANNEL, wantOn ? BL_LEVEL : 0);
-    blOn = wantOn;
+    barDrawn = true;
   }
 
   // sensor sampling
@@ -232,7 +231,6 @@ void loop() {
   if (now - lastSample >= SAMPLE_MS) {
     lastSample = now;
     objBuf[bufIdx] = mlx.readObjectTempF();
-    ambBuf[bufIdx] = mlx.readAmbientTempF();
     bufIdx++;
     if (bufIdx >= WIN) { bufIdx = 0; bufFull = true; }
   }
@@ -244,9 +242,7 @@ void loop() {
     int n = bufFull ? WIN : bufIdx;
     if (n > 0) {
       float obj = trimmedMean(objBuf, n);
-      float amb = trimmedMean(ambBuf, n);
       if (fabs(obj - lastObj) >= 0.1f) { drawObjectTemp(obj); lastObj = obj; }
-      if (fabs(amb - lastAmb) >= 0.1f) { drawAmbientTemp(amb); lastAmb = amb; }
     }
   }
 }
