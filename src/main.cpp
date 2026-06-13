@@ -56,6 +56,7 @@ TFT_eSprite         spr(&tft);
 Adafruit_MLX90614   mlx;
 XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 bool                blOn = true;
+bool                doorWakeActive = false;
 
 volatile bool garageReady = false;
 bool          mdnsStarted = false;
@@ -70,10 +71,11 @@ struct Door {
   bool   open;
   bool   lastOpen;
   String name;
+  String lastName;
 };
 Door doors[2] = {
-  { false, false, "Door 1" },
-  { false, false, "Door 2" },
+  { false, false, "Door 1", "" },
+  { false, false, "Door 2", "" },
 };
 
 // --- helpers ---
@@ -169,8 +171,8 @@ void drawObjectTemp(float f) {
 void garageTask(void *) {
   for (;;) {
     if (DEBUG_DOOR1_OPEN || DEBUG_DOOR2_OPEN) {
-      doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door" };
-      doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door" };
+      doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door", doors[0].lastName };
+      doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door", doors[1].lastName };
     } else if (WiFi.status() == WL_CONNECTED) {
       IPAddress ip = MDNS.queryHost(GARAGE_HOST);
       if (ip == IPAddress((uint32_t)0)) { vTaskDelay(pdMS_TO_TICKS(GARAGE_MS)); continue; }
@@ -261,6 +263,9 @@ void loop() {
     if (p.z >= TOUCH_Z_MIN && now - lastTouchMs > TOUCH_DEBOUNCE_MS) {
       lastTouchMs = now;
       blOn = !blOn;
+      if (blOn) {
+        doorWakeActive = false;
+      }
       ledcWrite(BL_CHANNEL, blOn ? BL_LEVEL : 0);
     }
   }
@@ -274,6 +279,7 @@ void loop() {
   static int32_t lastRetrySeconds = -1;
   bool wifiOnline = WiFi.status() == WL_CONNECTED;
   bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
+  bool doorNameChanged = doors[0].name != doors[0].lastName || doors[1].name != doors[1].lastName;
   bool wifiStateChanged = wifiOnline != lastWifiOnline;
   bool garageReadyChanged = garageReady != lastGarageReady;
 
@@ -294,16 +300,31 @@ void loop() {
   } else if (wifiOnline && !garageReady && (!barDrawn || wifiStateChanged)) {
     clearStatusBar();
     barDrawn = true;
-  } else if (wifiOnline && garageReady && (!barDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged)) {
+  } else if (wifiOnline && garageReady && (!barDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged || doorNameChanged)) {
     if (doorStateChanged) {
-      if (!blOn) { blOn = true; ledcWrite(BL_CHANNEL, BL_LEVEL); }
+      if (!blOn) {
+        blOn = true;
+        doorWakeActive = true;
+        ledcWrite(BL_CHANNEL, BL_LEVEL);
+      }
       beep();
     }
     drawDoorBar();
     doors[0].lastOpen = doors[0].open;
     doors[1].lastOpen = doors[1].open;
+    doors[0].lastName = doors[0].name;
+    doors[1].lastName = doors[1].name;
     barDrawn = true;
   }
+
+  if (doorWakeActive && !doors[0].open && !doors[1].open) {
+    if (blOn) {
+      blOn = false;
+      ledcWrite(BL_CHANNEL, 0);
+    }
+    doorWakeActive = false;
+  }
+
   lastWifiOnline = wifiOnline;
   lastGarageReady = garageReady;
   lastRetrySeconds = retrySeconds;
