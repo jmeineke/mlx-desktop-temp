@@ -18,6 +18,7 @@
 #define GARAGE_HOST  "garage"        // mDNS hostname (resolves garage.local)
 #define GARAGE_PATH  "/status"
 #define GARAGE_MS    2000    // poll interval
+#define WIFI_CONNECT_TIMEOUT_MS 10000
 
 // --- hardware pins ---
 #define BL_PIN        21
@@ -31,7 +32,7 @@
 #define TOUCH_MOSI    32
 
 // --- settings ---
-#define BL_LEVEL          200
+#define BL_LEVEL          128
 #define TOUCH_Z_MIN       100
 #define TOUCH_DEBOUNCE_MS 500
 #define BEEP_HZ       2000
@@ -56,6 +57,7 @@ XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 bool                blOn = true;
 
 volatile bool garageReady = false;
+bool          mdnsStarted = false;
 float objBuf[WIN];
 int   bufIdx  = 0;
 bool  bufFull = false;
@@ -113,6 +115,17 @@ void drawDoorBar() {
   tft.fillRect(157, BAR_Y, 6, BAR_H, BG);
 }
 
+void clearStatusBar() {
+  tft.fillRect(0, BAR_Y, 320, BAR_H, BG);
+}
+
+void drawWifiOfflineBar() {
+  tft.fillRect(0, BAR_Y, 320, BAR_H, TFT_RED);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_RED);
+  tft.drawString("WIFI OFFLINE", 160, BAR_Y + BAR_H / 2, 2);
+}
+
 void drawObjectTemp(float f) {
   uint16_t col = (f > 122) ? TFT_RED : (f >= 115) ? TFT_GREEN : TFT_BLUE;
   spr.fillSprite(BG);
@@ -162,6 +175,12 @@ void garageTask(void *) {
 
 // --- setup ---
 
+void startMdnsIfNeeded() {
+  if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
+    mdnsStarted = MDNS.begin("cyd");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -196,12 +215,13 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  uint32_t wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println(" connected");
-  MDNS.begin("cyd");
+  Serial.println(WiFi.status() == WL_CONNECTED ? " connected" : " offline");
+  startMdnsIfNeeded();
 
   xTaskCreatePinnedToCore(garageTask, "garage", 8192, nullptr, 1, nullptr, 0);
 }
@@ -222,10 +242,24 @@ void loop() {
     }
   }
 
-  // redraw bar once garage data is available, then on state change
+  startMdnsIfNeeded();
+
+  // redraw the top bar for WiFi state first, then door state when online
   static bool barDrawn = false;
+  static bool lastWifiOnline = false;
+  static bool lastGarageReady = false;
+  bool wifiOnline = WiFi.status() == WL_CONNECTED;
   bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
-  if (garageReady && (!barDrawn || doorStateChanged)) {
+  bool wifiStateChanged = wifiOnline != lastWifiOnline;
+  bool garageReadyChanged = garageReady != lastGarageReady;
+
+  if (!wifiOnline && (!barDrawn || wifiStateChanged)) {
+    drawWifiOfflineBar();
+    barDrawn = true;
+  } else if (wifiOnline && !garageReady && (!barDrawn || wifiStateChanged)) {
+    clearStatusBar();
+    barDrawn = true;
+  } else if (wifiOnline && garageReady && (!barDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged)) {
     if (doorStateChanged) {
       if (!blOn) { blOn = true; ledcWrite(BL_CHANNEL, BL_LEVEL); }
       beep();
@@ -235,6 +269,8 @@ void loop() {
     doors[1].lastOpen = doors[1].open;
     barDrawn = true;
   }
+  lastWifiOnline = wifiOnline;
+  lastGarageReady = garageReady;
 
   // sensor sampling
   static uint32_t lastSample = 0;
