@@ -34,8 +34,8 @@
 
 // --- settings ---
 #define BL_LEVEL          128
-#define TOUCH_Z_MIN       100
-#define TOUCH_DEBOUNCE_MS 500
+#define TOUCH_Z_MIN       1000
+#define TOUCH_DEBOUNCE_MS 250
 #define BEEP_HZ       2000
 #define BEEP_MS       200
 #define SAMPLE_MS    50
