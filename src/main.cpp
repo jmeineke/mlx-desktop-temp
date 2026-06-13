@@ -22,6 +22,8 @@
 // --- hardware pins ---
 #define BL_PIN        21
 #define BL_CHANNEL    0
+#define SPK_PIN       26
+#define SPK_CHANNEL   1
 #define TOUCH_CS      33
 #define TOUCH_IRQ     36
 #define TOUCH_CLK     25
@@ -29,9 +31,11 @@
 #define TOUCH_MOSI    32
 
 // --- settings ---
-#define BL_LEVEL          60
+#define BL_LEVEL          200
 #define TOUCH_Z_MIN       100
 #define TOUCH_DEBOUNCE_MS 500
+#define BEEP_HZ       2000
+#define BEEP_MS       200
 #define SAMPLE_MS    50
 #define DRAW_MS      250
 #define WIN          20
@@ -88,6 +92,12 @@ float trimmedMean(const float *buf, int n) {
 
 void drawBackground() {
   tft.fillScreen(BG);
+}
+
+void beep() {
+  ledcWriteTone(SPK_CHANNEL, BEEP_HZ);
+  delay(BEEP_MS);
+  ledcWriteTone(SPK_CHANNEL, 0);
 }
 
 void drawDoorBar() {
@@ -159,6 +169,9 @@ void setup() {
   ledcAttachPin(BL_PIN, BL_CHANNEL);
   ledcWrite(BL_CHANNEL, BL_LEVEL);
 
+  ledcSetup(SPK_CHANNEL, BEEP_HZ, 8);
+  ledcAttachPin(SPK_PIN, SPK_CHANNEL);
+
   Wire.begin(22, 27);
   delay(250);
   bool sensorOk = mlx.begin();
@@ -211,7 +224,12 @@ void loop() {
 
   // redraw bar once garage data is available, then on state change
   static bool barDrawn = false;
-  if (garageReady && (!barDrawn || doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen)) {
+  bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
+  if (garageReady && (!barDrawn || doorStateChanged)) {
+    if (doorStateChanged) {
+      if (!blOn) { blOn = true; ledcWrite(BL_CHANNEL, BL_LEVEL); }
+      beep();
+    }
     drawDoorBar();
     doors[0].lastOpen = doors[0].open;
     doors[1].lastOpen = doors[1].open;
