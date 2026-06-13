@@ -17,7 +17,7 @@
 #define WIFI_PASS    "1121121121abc"
 #define GARAGE_HOST  "garage"        // mDNS hostname (resolves garage.local)
 #define GARAGE_PATH  "/status"
-#define GARAGE_MS    1000    // poll interval
+#define GARAGE_MS    2000    // poll interval
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_RETRY_MS 10000
 
@@ -62,7 +62,6 @@ volatile bool garageReady = false;
 bool          mdnsStarted = false;
 bool          wifiInitialConnect = false;
 uint32_t      nextWifiRetryAt = 0;
-IPAddress     garageIp;
 float objBuf[WIN];
 int   bufIdx  = 0;
 bool  bufFull = false;
@@ -147,16 +146,6 @@ void startWifiConnectAttempt() {
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   nextWifiRetryAt = millis() + WIFI_RETRY_MS;
-  garageIp = IPAddress();
-}
-
-bool resolveGarageIpIfNeeded() {
-  if (garageIp != IPAddress()) {
-    return true;
-  }
-
-  garageIp = MDNS.queryHost(GARAGE_HOST);
-  return garageIp != IPAddress();
 }
 
 void drawObjectTemp(float f) {
@@ -185,9 +174,10 @@ void garageTask(void *) {
       doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door", doors[0].lastName };
       doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door", doors[1].lastName };
     } else if (WiFi.status() == WL_CONNECTED) {
-      if (!resolveGarageIpIfNeeded()) { vTaskDelay(pdMS_TO_TICKS(GARAGE_MS)); continue; }
+      IPAddress ip = MDNS.queryHost(GARAGE_HOST);
+      if (ip == IPAddress()) { vTaskDelay(pdMS_TO_TICKS(GARAGE_MS)); continue; }
       HTTPClient http;
-      http.begin("http://" + garageIp.toString() + GARAGE_PATH);
+      http.begin("http://" + ip.toString() + GARAGE_PATH);
       int code = http.GET();
       if (code == 200) {
         JsonDocument doc;
@@ -198,8 +188,6 @@ void garageTask(void *) {
           doors[1].name = doc["double"]["name"] | "Door 2";
           garageReady = true;
         }
-      } else {
-        garageIp = IPAddress();
       }
       http.end();
     }
@@ -291,6 +279,8 @@ void loop() {
   static int32_t lastRetrySeconds = -1;
   bool wifiOnline = WiFi.status() == WL_CONNECTED;
   bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
+  bool doorOpened = (doors[0].open && !doors[0].lastOpen) || (doors[1].open && !doors[1].lastOpen);
+  bool allDoorsClosed = !doors[0].open && !doors[1].open;
   bool doorNameChanged = doors[0].name != doors[0].lastName || doors[1].name != doors[1].lastName;
   bool wifiStateChanged = wifiOnline != lastWifiOnline;
   bool garageReadyChanged = garageReady != lastGarageReady;
@@ -300,7 +290,6 @@ void loop() {
     startWifiConnectAttempt();
   }
   if (!wifiOnline && wifiStateChanged) {
-    garageIp = IPAddress();
     garageReady = false;
   }
 
@@ -318,10 +307,17 @@ void loop() {
     barDrawn = true;
   } else if (wifiOnline && garageReady && (!barDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged || doorNameChanged)) {
     if (doorStateChanged) {
-      if (!blOn) {
+      if (doorOpened && !blOn) {
         blOn = true;
         doorWakeActive = true;
         ledcWrite(BL_CHANNEL, BL_LEVEL);
+      }
+      if (doorWakeActive && allDoorsClosed) {
+        if (blOn) {
+          blOn = false;
+          ledcWrite(BL_CHANNEL, 0);
+        }
+        doorWakeActive = false;
       }
       beep();
     }
@@ -331,14 +327,6 @@ void loop() {
     doors[0].lastName = doors[0].name;
     doors[1].lastName = doors[1].name;
     barDrawn = true;
-  }
-
-  if (doorWakeActive && !doors[0].open && !doors[1].open) {
-    if (blOn) {
-      blOn = false;
-      ledcWrite(BL_CHANNEL, 0);
-    }
-    doorWakeActive = false;
   }
 
   lastWifiOnline = wifiOnline;
