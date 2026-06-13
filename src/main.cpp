@@ -1,6 +1,8 @@
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
 #include <TFT_eSPI.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
@@ -18,11 +20,18 @@
 #define GARAGE_MS    2000    // poll interval
 
 // --- hardware pins ---
-#define BL_PIN      21
-#define BL_CHANNEL  0
+#define BL_PIN        21
+#define BL_CHANNEL    0
+#define TOUCH_CS      33
+#define TOUCH_IRQ     36
+#define TOUCH_CLK     25
+#define TOUCH_MISO    39
+#define TOUCH_MOSI    32
 
 // --- settings ---
-#define BL_LEVEL     60
+#define BL_LEVEL          60
+#define TOUCH_Z_MIN       100
+#define TOUCH_DEBOUNCE_MS 500
 #define SAMPLE_MS    50
 #define DRAW_MS      250
 #define WIN          20
@@ -36,9 +45,11 @@
 #define SPR_H_PX 140
 #define SPR_Y   (BAR_H + (240 - BAR_H - SPR_H_PX) / 2)
 
-TFT_eSPI          tft;
-TFT_eSprite       spr(&tft);
-Adafruit_MLX90614 mlx;
+TFT_eSPI            tft;
+TFT_eSprite         spr(&tft);
+Adafruit_MLX90614   mlx;
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
+bool                blOn = true;
 
 volatile bool garageReady = false;
 float objBuf[WIN];
@@ -156,6 +167,11 @@ void setup() {
   tft.setRotation(3);
   spr.createSprite(320, SPR_H_PX);
 
+  // touch must init AFTER tft.init() — TFT uses VSPI and clobbers touch pins otherwise
+  SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+  ts.begin();
+  ts.setRotation(3);
+
   drawBackground();
 
   if (!sensorOk) {
@@ -181,6 +197,17 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+  // touch: toggle backlight
+  static uint32_t lastTouchMs = 0;
+  if (ts.tirqTouched() && ts.touched()) {
+    TS_Point p = ts.getPoint();
+    if (p.z >= TOUCH_Z_MIN && now - lastTouchMs > TOUCH_DEBOUNCE_MS) {
+      lastTouchMs = now;
+      blOn = !blOn;
+      ledcWrite(BL_CHANNEL, blOn ? BL_LEVEL : 0);
+    }
+  }
 
   // redraw bar once garage data is available, then on state change
   static bool barDrawn = false;
