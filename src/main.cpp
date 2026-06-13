@@ -19,6 +19,7 @@
 #define GARAGE_PATH  "/status"
 #define GARAGE_MS    2000    // poll interval
 #define WIFI_CONNECT_TIMEOUT_MS 10000
+#define WIFI_RETRY_MS 10000
 
 // --- hardware pins ---
 #define BL_PIN        21
@@ -58,6 +59,8 @@ bool                blOn = true;
 
 volatile bool garageReady = false;
 bool          mdnsStarted = false;
+bool          wifiInitialConnect = false;
+uint32_t      nextWifiRetryAt = 0;
 float objBuf[WIN];
 int   bufIdx  = 0;
 bool  bufFull = false;
@@ -123,7 +126,24 @@ void drawWifiOfflineBar() {
   tft.fillRect(0, BAR_Y, 320, BAR_H, TFT_RED);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_RED);
-  tft.drawString("WIFI OFFLINE", 160, BAR_Y + BAR_H / 2, 2);
+  uint32_t now = millis();
+  uint32_t remainingMs = (nextWifiRetryAt > now) ? (nextWifiRetryAt - now) : 0;
+  uint32_t remainingSec = (remainingMs + 999) / 1000;
+  String msg = "WIFI OFFLINE  RETRY " + String(remainingSec);
+  tft.drawString(msg, 160, BAR_Y + BAR_H / 2, 2);
+}
+
+void drawWifiConnectingBar() {
+  tft.fillRect(0, BAR_Y, 320, BAR_H, TFT_ORANGE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_BLACK, TFT_ORANGE);
+  tft.drawString("CONNECTING TO WIFI", 160, BAR_Y + BAR_H / 2, 2);
+}
+
+void startWifiConnectAttempt() {
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  nextWifiRetryAt = millis() + WIFI_RETRY_MS;
 }
 
 void drawObjectTemp(float f) {
@@ -213,13 +233,16 @@ void setup() {
     Serial.println("MLX90614 not found");
   }
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  wifiInitialConnect = true;
+  drawWifiConnectingBar();
+  startWifiConnectAttempt();
   Serial.print("Connecting to WiFi");
   uint32_t wifiStart = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
     Serial.print(".");
   }
+  wifiInitialConnect = false;
   Serial.println(WiFi.status() == WL_CONNECTED ? " connected" : " offline");
   startMdnsIfNeeded();
 
@@ -248,12 +271,24 @@ void loop() {
   static bool barDrawn = false;
   static bool lastWifiOnline = false;
   static bool lastGarageReady = false;
+  static int32_t lastRetrySeconds = -1;
   bool wifiOnline = WiFi.status() == WL_CONNECTED;
   bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
   bool wifiStateChanged = wifiOnline != lastWifiOnline;
   bool garageReadyChanged = garageReady != lastGarageReady;
 
-  if (!wifiOnline && (!barDrawn || wifiStateChanged)) {
+  if (!wifiOnline && !wifiInitialConnect && (int32_t)(now - nextWifiRetryAt) >= 0) {
+    Serial.println("Retrying WiFi");
+    startWifiConnectAttempt();
+  }
+
+  uint32_t remainingMs = (nextWifiRetryAt > now) ? (nextWifiRetryAt - now) : 0;
+  int32_t retrySeconds = (remainingMs + 999) / 1000;
+
+  if (wifiInitialConnect && (!barDrawn || wifiStateChanged)) {
+    drawWifiConnectingBar();
+    barDrawn = true;
+  } else if (!wifiOnline && (!barDrawn || wifiStateChanged || retrySeconds != lastRetrySeconds)) {
     drawWifiOfflineBar();
     barDrawn = true;
   } else if (wifiOnline && !garageReady && (!barDrawn || wifiStateChanged)) {
@@ -271,6 +306,7 @@ void loop() {
   }
   lastWifiOnline = wifiOnline;
   lastGarageReady = garageReady;
+  lastRetrySeconds = retrySeconds;
 
   // sensor sampling
   static uint32_t lastSample = 0;
