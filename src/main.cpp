@@ -1,14 +1,10 @@
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
 #include <TFT_eSPI.h>
-#include <SPI.h>
-#include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
-#include "driver/gpio.h"
-#include "esp_sleep.h"
 
 // --- debug overrides (set to true to test display without opening doors) ---
 #define DEBUG_DOOR1_OPEN false
@@ -22,18 +18,11 @@
 #define GARAGE_MS    2000    // poll interval
 
 // --- hardware pins ---
-#define BL_PIN        21
-#define BL_CHANNEL    0
-#define TOUCH_CS      33
-#define TOUCH_IRQ     36
-#define TOUCH_CLK     25
-#define TOUCH_MISO    39
-#define TOUCH_MOSI    32
+#define BL_PIN      21
+#define BL_CHANNEL  0
 
 // --- settings ---
-#define BL_LEVEL          60
-#define TOUCH_Z_MIN       100
-#define TOUCH_DEBOUNCE_MS 500
+#define BL_LEVEL     60
 #define SAMPLE_MS    50
 #define DRAW_MS      250
 #define WIN          20
@@ -42,15 +31,14 @@
 #define BG    0x0861
 
 // --- door alert bar geometry ---
-#define BAR_H   32    // height of alert bar at top of screen
+#define BAR_H   32
 #define BAR_Y   0
-#define SPR_H_PX 140                              // temp sprite height
-#define SPR_Y   (BAR_H + (240 - BAR_H - SPR_H_PX) / 2)  // center sprite below bar
+#define SPR_H_PX 140
+#define SPR_Y   (BAR_H + (240 - BAR_H - SPR_H_PX) / 2)
 
 TFT_eSPI          tft;
 TFT_eSprite       spr(&tft);
 Adafruit_MLX90614 mlx;
-XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 volatile bool garageReady = false;
 float objBuf[WIN];
@@ -91,18 +79,17 @@ void drawBackground() {
   tft.fillScreen(BG);
 }
 
-// Draw the door alert bar at the top. Called whenever door state changes.
 void drawDoorBar() {
   tft.setTextDatum(MC_DATUM);
   for (int i = 0; i < 2; i++) {
     int x = i * 163;
-    int w = (i == 0) ? 157 : 157;
+    int w = 157;
     uint16_t color = doors[i].open ? TFT_RED : TFT_DARKGREEN;
     tft.fillRect(x, BAR_Y, w, BAR_H, color);
     tft.setTextColor(TFT_WHITE, color);
     tft.drawString(doors[i].name, x + w / 2, BAR_Y + BAR_H / 2, 2);
   }
-  tft.fillRect(157, BAR_Y, 6, BAR_H, BG);  // gap between doors
+  tft.fillRect(157, BAR_Y, 6, BAR_H, BG);
 }
 
 void drawObjectTemp(float f) {
@@ -166,16 +153,8 @@ void setup() {
   bool sensorOk = mlx.begin();
 
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(3);
   spr.createSprite(320, SPR_H_PX);
-
-  // touch must init AFTER tft.init() — TFT_eSPI uses VSPI and clobbers touch pins otherwise
-  SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-  ts.begin();
-  ts.setRotation(1);
-
-  gpio_wakeup_enable(GPIO_NUM_36, GPIO_INTR_LOW_LEVEL);
-  esp_sleep_enable_gpio_wakeup();
 
   drawBackground();
 
@@ -202,20 +181,6 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-
-  // touch: toggle sleep on press
-  static uint32_t lastTouchMs = 0;
-  if (ts.tirqTouched() && ts.touched()) {
-    TS_Point p = ts.getPoint();
-    if (p.z >= TOUCH_Z_MIN && now - lastTouchMs > TOUCH_DEBOUNCE_MS) {
-      lastTouchMs = now;
-      ledcWrite(BL_CHANNEL, 0);
-      esp_light_sleep_start();           // blocks until TIRQ wakes us
-      ledcWrite(BL_CHANNEL, BL_LEVEL);
-      lastTouchMs = millis();            // debounce the wake touch
-      lastObj = -999;                    // force temp redraw on wake
-    }
-  }
 
   // redraw bar once garage data is available, then on state change
   static bool barDrawn = false;
