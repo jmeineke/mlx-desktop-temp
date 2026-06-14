@@ -22,3 +22,18 @@ void beep() {
   delay(BEEP_MS);
   ledcWriteTone(SPK_CHANNEL, 0);
 }
+
+void playWifiConnectedChime() {
+  const int noteFrequencies[] = { 784, 1047, 1319, 1568 };
+  const int noteDurationsMs[] = { 70, 80, 100, 170 };
+  const int gapMs = 25;
+
+  for (int i = 0; i < 4; i++) {
+    ledcWriteTone(SPK_CHANNEL, noteFrequencies[i]);
+    delay(noteDurationsMs[i]);
+    ledcWriteTone(SPK_CHANNEL, 0);
+    if (i < 3) {
+      delay(gapMs);
+    }
+  }
+}

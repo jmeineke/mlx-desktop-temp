@@ -25,6 +25,7 @@ void handleTouch(uint32_t now) {
 
 void handleStatusBar(uint32_t now) {
   static bool hasStatusBarBeenDrawn = false;
+  static bool hasEstablishedGarageBaseline = false;
   static bool wasWifiOnline = false;
   static bool wasGarageReady = false;
   static int32_t lastDisplayedRetrySeconds = -1;
@@ -70,6 +71,9 @@ void handleStatusBar(uint32_t now) {
         setBacklightOn(false);
         isDoorWakeActive = false;
       }
+    }
+
+    if (garageStatusChanged && hasEstablishedGarageBaseline) {
       beep();
     }
 
@@ -78,6 +82,7 @@ void handleStatusBar(uint32_t now) {
     doors[1].lastOpen = doors[1].open;
     doors[0].lastName = doors[0].name;
     doors[1].lastName = doors[1].name;
+    hasEstablishedGarageBaseline = true;
     hasStatusBarBeenDrawn = true;
   }
 

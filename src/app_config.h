@@ -17,7 +17,7 @@
 #define BL_PIN        21
 #define BL_CHANNEL    0
 #define SPK_PIN       26
-#define SPK_CHANNEL   1
+#define SPK_CHANNEL   2
 #define TOUCH_CS      33
 #define TOUCH_IRQ     36
 #define TOUCH_CLK     25
@@ -28,9 +28,9 @@
 
 // --- settings ---
 #define BL_LEVEL          128
-#define TOUCH_Z_MIN       1000
+#define TOUCH_Z_MIN       1500
 #define TOUCH_DEBOUNCE_MS 250
-#define BEEP_HZ       2000
+#define BEEP_HZ       1500
 #define BEEP_MS       200
 #define SAMPLE_MS    50
 #define DRAW_MS      100

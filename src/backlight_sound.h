@@ -6,3 +6,4 @@ void initBacklight();
 void initSpeaker();
 void setBacklightOn(bool on);
 void beep();
+void playWifiConnectedChime();

@@ -3,12 +3,14 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include "app_config.h"
+#include "backlight_sound.h"
 
 bool wifiInitialConnect = false;
 
 namespace {
 bool mdnsStarted = false;
 uint32_t nextWifiRetryAt = 0;
+bool wasWifiConnected = false;
 
 void startWifiConnectAttempt() {
   WiFi.disconnect();
@@ -20,6 +22,14 @@ void startMdnsIfNeeded() {
   if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
     mdnsStarted = MDNS.begin("cyd");
   }
+}
+
+void handleWifiConnectedTransition() {
+  bool isWifiConnected = WiFi.status() == WL_CONNECTED;
+  if (isWifiConnected && !wasWifiConnected) {
+    playWifiConnectedChime();
+  }
+  wasWifiConnected = isWifiConnected;
 }
 }
 
@@ -37,6 +47,7 @@ void beginInitialWifiConnect() {
   wifiInitialConnect = false;
   Serial.println(WiFi.status() == WL_CONNECTED ? " connected" : " offline");
   startMdnsIfNeeded();
+  handleWifiConnectedTransition();
 }
 
 void handleWifiMaintenance(uint32_t now) {
@@ -45,6 +56,7 @@ void handleWifiMaintenance(uint32_t now) {
     startWifiConnectAttempt();
   }
   startMdnsIfNeeded();
+  handleWifiConnectedTransition();
 }
 
 bool isWifiOnline() {
