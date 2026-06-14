@@ -35,6 +35,7 @@
 #define SAMPLE_MS    50
 #define DRAW_MS      100
 #define WIN          6
+#define TEMP_WAKE_DELTA_F 15.0f
 
 // --- colors (RGB565) ---
 #define BG    0x0861

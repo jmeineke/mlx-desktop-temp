@@ -8,79 +8,82 @@
 #include "wifi_manager.h"
 
 namespace {
-bool blOn = true;
-bool doorWakeActive = false;
+bool isBacklightOn = true;
+bool isDoorWakeActive = false;
 
 void handleTouch(uint32_t now) {
   if (!shouldToggleBacklight(now)) {
     return;
   }
 
-  blOn = !blOn;
-  if (blOn) {
-    doorWakeActive = false;
+  isBacklightOn = !isBacklightOn;
+  if (isBacklightOn) {
+    isDoorWakeActive = false;
   }
-  setBacklightOn(blOn);
+  setBacklightOn(isBacklightOn);
 }
 
 void handleStatusBar(uint32_t now) {
-  static bool barDrawn = false;
-  static bool lastWifiOnline = false;
-  static bool lastGarageReady = false;
-  static int32_t lastRetrySeconds = -1;
+  static bool hasStatusBarBeenDrawn = false;
+  static bool wasWifiOnline = false;
+  static bool wasGarageReady = false;
+  static int32_t lastDisplayedRetrySeconds = -1;
 
-  bool wifiOnline = isWifiOnline();
+  bool isWifiCurrentlyOnline = isWifiOnline();
   bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
-  bool doorOpened = (doors[0].open && !doors[0].lastOpen) || (doors[1].open && !doors[1].lastOpen);
-  bool allDoorsClosed = !doors[0].open && !doors[1].open;
   bool doorNameChanged = doors[0].name != doors[0].lastName || doors[1].name != doors[1].lastName;
-  bool wifiStateChanged = wifiOnline != lastWifiOnline;
-  bool garageReadyChanged = garageReady != lastGarageReady;
+  bool areAllDoorsClosed = !doors[0].open && !doors[1].open;
+  bool garageStatusChanged = doorStateChanged || doorNameChanged;
+  bool wifiStateChanged = isWifiCurrentlyOnline != wasWifiOnline;
+  bool garageReadyChanged = garageReady != wasGarageReady;
 
-  if (!wifiOnline && wifiStateChanged) {
+  if (!isWifiCurrentlyOnline && wifiStateChanged) {
     markGarageNotReady();
   }
 
   uint32_t nextWifiRetryAt = getNextWifiRetryAt();
   uint32_t remainingMs = (nextWifiRetryAt > now) ? (nextWifiRetryAt - now) : 0;
-  int32_t retrySeconds = (remainingMs + 999) / 1000;
+  int32_t remainingRetrySeconds = (remainingMs + 999) / 1000;
 
-  if (wifiInitialConnect && (!barDrawn || wifiStateChanged)) {
+  if (wifiInitialConnect && (!hasStatusBarBeenDrawn || wifiStateChanged)) {
     drawWifiConnectingBar();
-    barDrawn = true;
-  } else if (!wifiOnline && (!barDrawn || wifiStateChanged || retrySeconds != lastRetrySeconds)) {
+    hasStatusBarBeenDrawn = true;
+  } else if (!isWifiCurrentlyOnline &&
+             (!hasStatusBarBeenDrawn || wifiStateChanged || remainingRetrySeconds != lastDisplayedRetrySeconds)) {
     drawWifiOfflineBar(nextWifiRetryAt);
-    barDrawn = true;
-  } else if (wifiOnline && !garageReady && (!barDrawn || wifiStateChanged)) {
+    hasStatusBarBeenDrawn = true;
+  } else if (isWifiCurrentlyOnline && !garageReady && (!hasStatusBarBeenDrawn || wifiStateChanged)) {
     clearStatusBar();
-    barDrawn = true;
-  } else if (wifiOnline && garageReady && (!barDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged || doorNameChanged)) {
+    hasStatusBarBeenDrawn = true;
+  } else if (isWifiCurrentlyOnline &&
+             garageReady &&
+             (!hasStatusBarBeenDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged || doorNameChanged)) {
+    if (garageStatusChanged && !isBacklightOn) {
+      isBacklightOn = true;
+      isDoorWakeActive = !areAllDoorsClosed;
+      setBacklightOn(true);
+    }
+
     if (doorStateChanged) {
-      if (doorOpened && !blOn) {
-        blOn = true;
-        doorWakeActive = true;
-        setBacklightOn(true);
-      }
-      if (doorWakeActive && allDoorsClosed) {
-        if (blOn) {
-          blOn = false;
-          setBacklightOn(false);
-        }
-        doorWakeActive = false;
+      if (isDoorWakeActive && areAllDoorsClosed) {
+        isBacklightOn = false;
+        setBacklightOn(false);
+        isDoorWakeActive = false;
       }
       beep();
     }
+
     drawDoorBar(doors);
     doors[0].lastOpen = doors[0].open;
     doors[1].lastOpen = doors[1].open;
     doors[0].lastName = doors[0].name;
     doors[1].lastName = doors[1].name;
-    barDrawn = true;
+    hasStatusBarBeenDrawn = true;
   }
 
-  lastWifiOnline = wifiOnline;
-  lastGarageReady = garageReady;
-  lastRetrySeconds = retrySeconds;
+  wasWifiOnline = isWifiCurrentlyOnline;
+  wasGarageReady = garageReady;
+  lastDisplayedRetrySeconds = remainingRetrySeconds;
 }
 }
 
@@ -111,5 +114,8 @@ void loop() {
   handleTouch(now);
   handleWifiMaintenance(now);
   handleStatusBar(now);
-  handleTemperature(now);
+  if (handleTemperature(now) && !isBacklightOn) {
+    isBacklightOn = true;
+    setBacklightOn(true);
+  }
 }

@@ -5,26 +5,26 @@
 #include "app_config.h"
 
 namespace {
-XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
-uint32_t lastTouchMs = 0;
+XPT2046_Touchscreen touchscreen(TOUCH_CS, TOUCH_IRQ);
+uint32_t lastTouchToggleAtMs = 0;
 }
 
 void initTouch() {
   SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-  ts.begin();
-  ts.setRotation(SCREEN_ROTATION);
+  touchscreen.begin();
+  touchscreen.setRotation(SCREEN_ROTATION);
 }
 
 bool shouldToggleBacklight(uint32_t now) {
-  if (!ts.tirqTouched() || !ts.touched()) {
+  if (!touchscreen.tirqTouched() || !touchscreen.touched()) {
     return false;
   }
 
-  TS_Point p = ts.getPoint();
-  if (p.z < TOUCH_Z_MIN || now - lastTouchMs <= TOUCH_DEBOUNCE_MS) {
+  TS_Point touchPoint = touchscreen.getPoint();
+  if (touchPoint.z < TOUCH_Z_MIN || now - lastTouchToggleAtMs <= TOUCH_DEBOUNCE_MS) {
     return false;
   }
 
-  lastTouchMs = now;
+  lastTouchToggleAtMs = now;
   return true;
 }
