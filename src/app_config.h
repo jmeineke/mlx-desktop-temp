@@ -40,6 +40,8 @@
 #define BG    0x0861
 
 // --- display geometry ---
+// Rotation: 0/2 portrait, 1/3 landscape. Use 1 or 3 to flip current orientation 180 degrees.
+#define SCREEN_ROTATION 1
 #define BAR_H   32
 #define BAR_Y   0
 #define SPR_H_PX 140

@@ -12,7 +12,7 @@ uint32_t lastTouchMs = 0;
 void initTouch() {
   SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   ts.begin();
-  ts.setRotation(3);
+  ts.setRotation(SCREEN_ROTATION);
 }
 
 bool shouldToggleBacklight(uint32_t now) {

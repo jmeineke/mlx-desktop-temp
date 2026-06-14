@@ -10,7 +10,7 @@ TFT_eSprite spr(&tft);
 
 void initDisplay() {
   tft.init();
-  tft.setRotation(3);
+  tft.setRotation(SCREEN_ROTATION);
   spr.createSprite(320, SPR_H_PX);
 }
 
