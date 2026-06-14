@@ -89,7 +89,7 @@ drops below `TEMP_OFF` (84 °F) — the 1 °F gap is hysteresis to prevent flick
 the threshold. When on, brightness is `BL_LEVEL`.
 
 Readings are smoothed with a rolling **trimmed mean**: the sensor is sampled fast
-(`SAMPLE_MS`, 50 ms) into a ring buffer (`WIN`, 20 samples = 1 s window); each
-refresh (`DRAW_MS`, 250 ms) drops the min+max sample and averages the rest. Fast
+(`SAMPLE_MS`, 50 ms) into a ring buffer (`WIN`, 10 samples = 0.5 s window); each
+refresh (`DRAW_MS`, 150 ms) drops the min+max sample and averages the rest. Fast
 sampling keeps it responsive while the window + trim keep readings flat and
 spike-free. Widen `WIN` for flatter/slower, shrink for snappier.

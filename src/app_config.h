@@ -33,8 +33,8 @@
 #define BEEP_HZ       2000
 #define BEEP_MS       200
 #define SAMPLE_MS    50
-#define DRAW_MS      250
-#define WIN          20
+#define DRAW_MS      150
+#define WIN          10
 
 // --- colors (RGB565) ---
 #define BG    0x0861
