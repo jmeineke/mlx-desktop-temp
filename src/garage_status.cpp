@@ -12,6 +12,7 @@ Door doors[2] = {
 };
 
 volatile bool garageReady = false;
+volatile GarageConnectionState garageConnectionState = GARAGE_CONNECTING;
 
 namespace {
 void garageTask(void *) {
@@ -19,9 +20,13 @@ void garageTask(void *) {
     if (DEBUG_DOOR1_OPEN || DEBUG_DOOR2_OPEN) {
       doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door", doors[0].lastName };
       doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door", doors[1].lastName };
+      garageReady = true;
+      garageConnectionState = GARAGE_READY;
     } else if (WiFi.status() == WL_CONNECTED) {
       IPAddress ip = MDNS.queryHost(GARAGE_HOST);
       if (ip == IPAddress()) {
+        garageReady = false;
+        garageConnectionState = GARAGE_OFFLINE;
         vTaskDelay(pdMS_TO_TICKS(GARAGE_MS));
         continue;
       }
@@ -37,7 +42,14 @@ void garageTask(void *) {
           doors[0].name = doc["single"]["name"] | "Door 1";
           doors[1].name = doc["double"]["name"] | "Door 2";
           garageReady = true;
+          garageConnectionState = GARAGE_READY;
+        } else {
+          garageReady = false;
+          garageConnectionState = GARAGE_OFFLINE;
         }
+      } else {
+        garageReady = false;
+        garageConnectionState = GARAGE_OFFLINE;
       }
       http.end();
     }
@@ -52,4 +64,5 @@ void startGarageTask() {
 
 void markGarageNotReady() {
   garageReady = false;
+  garageConnectionState = GARAGE_CONNECTING;
 }

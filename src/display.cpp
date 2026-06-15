@@ -53,6 +53,20 @@ void drawWifiConnectingBar() {
   display.drawString("CONNECTING TO WIFI", 160, BAR_Y + BAR_H / 2, 2);
 }
 
+void drawGarageConnectingBar() {
+  display.fillRect(0, BAR_Y, 320, BAR_H, TFT_DARKCYAN);
+  display.setTextDatum(MC_DATUM);
+  display.setTextColor(TFT_WHITE, TFT_DARKCYAN);
+  display.drawString("CONNECTING TO GARAGE", 160, BAR_Y + BAR_H / 2, 2);
+}
+
+void drawGarageOfflineBar() {
+  display.fillRect(0, BAR_Y, 320, BAR_H, TFT_MAROON);
+  display.setTextDatum(MC_DATUM);
+  display.setTextColor(TFT_WHITE, TFT_MAROON);
+  display.drawString("GARAGE OFFLINE", 160, BAR_Y + BAR_H / 2, 2);
+}
+
 void drawSensorError() {
   display.setTextDatum(MC_DATUM);
   display.setTextColor(TFT_RED, BG);

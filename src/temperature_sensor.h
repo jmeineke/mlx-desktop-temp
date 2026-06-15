@@ -3,4 +3,4 @@
 #include <Arduino.h>
 
 bool initTemperatureSensor();
-bool handleTemperature(uint32_t now);
+void handleTemperature(uint32_t now);

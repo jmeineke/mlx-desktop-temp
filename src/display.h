@@ -9,5 +9,7 @@ void drawDoorBar(const Door doors[2]);
 void clearStatusBar();
 void drawWifiOfflineBar(uint32_t nextWifiRetryAt);
 void drawWifiConnectingBar();
+void drawGarageConnectingBar();
+void drawGarageOfflineBar();
 void drawSensorError();
 void drawObjectTemp(float f);

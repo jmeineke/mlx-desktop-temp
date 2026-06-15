@@ -40,9 +40,7 @@ bool initTemperatureSensor() {
   return infraredTemperatureSensor.begin();
 }
 
-bool handleTemperature(uint32_t now) {
-  bool hasDrasticTemperatureChange = false;
-
+void handleTemperature(uint32_t now) {
   static uint32_t lastSampleAtMs = 0;
   if (now - lastSampleAtMs >= SAMPLE_MS) {
     lastSampleAtMs = now;
@@ -60,16 +58,10 @@ bool handleTemperature(uint32_t now) {
     int sampleCount = sampleBufferFilled ? WIN : sampleBufferIndex;
     if (sampleCount > 0) {
       float objectTemperatureFahrenheit = trimmedMean(objectTemperatureSamples, sampleCount);
-      if (lastDisplayedObjectTemperatureFahrenheit > -998 &&
-          fabs(objectTemperatureFahrenheit - lastDisplayedObjectTemperatureFahrenheit) >= TEMP_WAKE_DELTA_F) {
-        hasDrasticTemperatureChange = true;
-      }
       if (fabs(objectTemperatureFahrenheit - lastDisplayedObjectTemperatureFahrenheit) >= 0.1f) {
         drawObjectTemp(objectTemperatureFahrenheit);
         lastDisplayedObjectTemperatureFahrenheit = objectTemperatureFahrenheit;
       }
     }
   }
-
-  return hasDrasticTemperatureChange;
 }
