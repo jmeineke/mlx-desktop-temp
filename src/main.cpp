@@ -73,8 +73,10 @@ void handleStatusBar(uint32_t now) {
       }
     }
 
-    if (garageStatusChanged && hasEstablishedGarageBaseline) {
-      beep();
+    if (hasEstablishedGarageBaseline) {
+      if (garageStatusChanged) {
+        playDoorStatusChime();
+      }
     }
 
     drawDoorBar(doors);

@@ -36,6 +36,8 @@
 #define DRAW_MS      100
 #define WIN          6
 #define TEMP_WAKE_DELTA_F 15.0f
+#define TEMP_COLOR_GREEN_MIN_F 115.0f
+#define TEMP_COLOR_RED_MIN_F 120.0f
 
 // --- colors (RGB565) ---
 #define BG    0x0861

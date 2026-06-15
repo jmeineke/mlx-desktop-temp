@@ -60,7 +60,9 @@ void drawSensorError() {
 }
 
 void drawObjectTemp(float temperatureFahrenheit) {
-  uint16_t color = (temperatureFahrenheit > 122) ? TFT_RED : (temperatureFahrenheit >= 115) ? TFT_GREEN : TFT_BLUE;
+  uint16_t color = (temperatureFahrenheit > TEMP_COLOR_RED_MIN_F) ? TFT_RED :
+                   (temperatureFahrenheit >= TEMP_COLOR_GREEN_MIN_F) ? TFT_GREEN :
+                   TFT_BLUE;
   temperatureSprite.fillSprite(BG);
   temperatureSprite.setTextDatum(TL_DATUM);
   temperatureSprite.setTextColor(color, BG);
