@@ -45,10 +45,6 @@ void handleStatusBar(uint32_t now) {
     markGarageNotReady();
   }
 
-  if (garageConnectionStateChanged && currentGarageConnectionState == GARAGE_READY) {
-    playWifiConnectedChime();
-  }
-
   uint32_t nextWifiRetryAt = getNextWifiRetryAt();
   uint32_t remainingMs = (nextWifiRetryAt > now) ? (nextWifiRetryAt - now) : 0;
   int32_t remainingRetrySeconds = (remainingMs + 999) / 1000;

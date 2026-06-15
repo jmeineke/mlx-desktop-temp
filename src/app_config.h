@@ -9,7 +9,8 @@
 #define WIFI_PASS    "1121121121abc"
 #define GARAGE_HOST  "garage"        // mDNS hostname (resolves garage.local)
 #define GARAGE_PATH  "/status"
-#define GARAGE_MS    2000    // poll interval
+#define GARAGE_MS    5000    // poll interval
+#define GARAGE_HTTP_TIMEOUT_MS 4000
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_RETRY_MS 10000
 
