@@ -1,95 +1,118 @@
 # MLX Desktop Temp
 
-IR temperature readout on a CYD (Cheap Yellow Display). Reads an MLX90614-DCI
-non-contact IR sensor over I2C and shows the object temperature in °F on the
-display.
+CYD firmware for an ESP32-2432S028R "Cheap Yellow Display". It shows an
+MLX90614 object temperature reading, polls the garage monitor, and uses the top
+status bar for WiFi, garage connectivity, and door state.
 
 ## Hardware
 
-- **Board:** ESP32-2432S028R "CYD" — 2.4" 320×240 ILI9341 TFT, ESP32, CH340 USB-serial
-- **Sensor:** MLX90614-DCI (GY-906-DCI breakout, 4-pin, narrow ~5° field of view)
+- Board: ESP32-2432S028R CYD, 2.4 inch 320x240 ILI9341 TFT, ESP32, CH340 USB serial
+- Sensor: MLX90614-DCI on a GY-906-DCI breakout
+- Speaker: small 8 ohm speaker on the CYD speaker connector
 
-### Wiring — sensor to CYD `CN1` connector (JST 1.25mm 4-pin)
+### Sensor Wiring
 
-`CN1` silkscreen: `GND | IO22 | IO27 | 3.3V`
+CYD `CN1` silkscreen: `GND | IO22 | IO27 | 3.3V`
 
 | MLX90614 | CYD CN1 |
 |----------|---------|
-| VDD/VIN  | 3.3V    |
-| VSS/GND  | GND     |
-| SDA      | IO22    |
-| SCL      | IO27    |
+| VDD/VIN  | 3.3V   |
+| VSS/GND  | GND    |
+| SDA      | IO22   |
+| SCL      | IO27   |
 
 Notes:
-- Use **3.3V**, not VIN (5V). Sensor is a 3.3V part.
-- GY-906 has onboard pullups + regulator — no extra resistors.
-- VSS = ground. Do not put 3.3V on VSS (reversed power kills the sensor).
-- `CN1` is JST 1.25mm. Qwiic SH1.0 cables do **not** fit (wrong pitch + wrong pin order).
 
-## Build & Flash
+- Use 3.3V, not VIN.
+- GY-906 has onboard pullups and regulator, so no extra resistors are needed.
+- `CN1` is JST 1.25 mm. Qwiic SH1.0 cables do not fit.
 
-VSCode + PlatformIO IDE extension. Open folder, Build (✓), Upload (→).
+## Build And Flash
 
-- Driver: CH340. Install if no COM port appears.
-- First build is slow (pulls toolchain + libs).
+Use VSCode with the PlatformIO extension. Open this folder, then run PlatformIO
+Build and Upload.
 
-### Config notes ([platformio.ini](platformio.ini))
+- Driver: CH340. Install it if no COM port appears.
+- First build is slow because PlatformIO downloads the toolchain and libraries.
+- TFT_eSPI is configured through `platformio.ini` build flags. Do not edit
+  `User_Setup.h`. See `docs/TFT_ESPI_SETUP.md`.
 
-- TFT_eSPI is configured entirely via `build_flags` — do **not** edit `User_Setup.h`.
-  See [docs/TFT_ESPI_SETUP.md](docs/TFT_ESPI_SETUP.md).
-- `platform` pinned to `espressif32@6.13.0`.
+## Configuration
 
-## Gotchas (hit during setup)
+Runtime settings live in `src/app_config.h`.
 
-- **`No serial data received` on upload:** check `pio device list`. Multiple CH340
-  devices (e.g. a Baofeng radio programming cable) confuse auto-detect — unplug the
-  other one or set `upload_port` explicitly.
-- **`ModuleNotFoundError: No module named 'intelhex'`:** PlatformIO penv was broken.
-  Fix: `C:/Python313/python.exe -m pip install intelhex`.
-- **White/blank screen:** the backlight on GPIO21 must be enabled in code (this
-  project uses LEDC PWM); also check the display rotation.
-- **Ghosting text:** always pass a bg color to `setTextColor(fg, bg)`.
+Important values:
 
-## Garage Door Alerts
+- `WIFI_SSID` / `WIFI_PASS`: WiFi credentials.
+- `GARAGE_HOST` / `GARAGE_PATH`: garage monitor endpoint, currently `garage.local/status`.
+- `GARAGE_MS`: garage poll interval, currently 5 seconds.
+- `GARAGE_HTTP_TIMEOUT_MS`: HTTP timeout, currently 4.9 seconds.
+- `GARAGE_FAILURES_BEFORE_OFFLINE`: consecutive failed polls before red garage offline.
+- `BL_LEVEL`: backlight PWM brightness when on.
+- `SCREEN_ROTATION`: display/touch rotation. `0` and `2` are portrait, `1` and `3` are landscape.
 
-Polls `http://garage.local/status` (a local-network endpoint, resolved via mDNS)
-every 2 s over WiFi. The poll runs in a FreeRTOS task pinned to core 0 so the
-blocking HTTP request never stalls the temperature display on core 1.
+## Firmware Layout
 
-When a door is open, a thin red bar appears at the top of the screen showing the
-door name in white text. When both doors are open, the bar splits into two
-side-by-side halves, one per door. The bar disappears when both doors are closed.
+- `src/main.cpp`: setup, main loop, status-bar decisions, backlight wake/auto-off logic.
+- `src/app_config.h`: typed configuration constants.
+- `src/backlight_sound.*`: backlight PWM and non-blocking sound sequences.
+- `src/display.*`: TFT drawing functions.
+- `src/garage_status.*`: garage polling task, cached IP, failure debounce, locked status snapshots.
+- `src/temperature_sensor.*`: MLX90614 sampling, trimmed mean, temperature drawing.
+- `src/touch_input.*`: touch read/debounce for manual backlight toggle.
+- `src/wifi_manager.*`: WiFi connect/retry, mDNS startup, WiFi debug logging.
 
-Door names come from the JSON payload (`single.name` / `double.name`), so the
-labels follow whatever the garage endpoint reports. The expected shape is:
+## Garage Status Behavior
+
+The garage task polls `http://garage.local/status` over WiFi. It resolves the
+host with mDNS, caches the resolved IP, and keeps that cached IP through HTTP
+timeout failures.
+
+Expected JSON:
 
 ```json
-{"single":{"name":"Joe's door","open":false},
- "double":{"name":"Elaine's door","open":false}}
+{
+  "single": { "name": "Joe's door", "open": false },
+  "double": { "name": "Elaine's door", "open": false }
+}
 ```
 
-WiFi credentials and the poll URL are set via `#define` at the top of
-[src/main.cpp](src/main.cpp). Set `DEBUG_DOOR1_OPEN` / `DEBUG_DOOR2_OPEN` to `true`
-to force the bar on for testing without opening a real door.
+Startup mDNS failures stay in `CONNECTING TO GARAGE`. After the first successful
+status read, transient failures keep showing the last known door status. Red
+`GARAGE OFFLINE` appears only after the configured consecutive failure threshold.
 
-## Firmware
+Any garage data change wakes the display if the backlight is off and plays the
+garage chime. The first successful status read establishes the baseline and does
+not chime.
 
-[src/main.cpp](src/main.cpp) — initializes the sensor, display, and touch, connects
-to WiFi, and starts the garage-polling task. The main loop reads object/ambient
-temperature in °F and updates the UI only when a value changes.
+## Backlight Behavior
 
-UI: a large object temperature (TFT_eSPI font 8) with a degree symbol, rendered via
-a `TFT_eSprite` for flicker-free updates. Requires `LOAD_FONT8` in the build flags
-for the large digits (`LOAD_FONT2` / `LOAD_FONT4` cover the smaller labels).
+Touch toggles the backlight manually.
 
-The backlight (ESP32 LEDC PWM on GPIO21) only turns on when there's something
-worth showing: either a garage door is open, or the object temperature is above
-`TEMP_ON` (85 °F). It turns back off once both doors are closed and the temperature
-drops below `TEMP_OFF` (84 °F) — the 1 °F gap is hysteresis to prevent flicker near
-the threshold. When on, brightness is `BL_LEVEL`.
+If a garage data change wakes the display while it was off, that wake is tracked
+as door-triggered. When both doors later report closed, the backlight turns off
+automatically. If the user had already turned the backlight on manually, the
+door-triggered auto-off path does not take over.
 
-Readings are smoothed with a rolling **trimmed mean**: the sensor is sampled fast
-(`SAMPLE_MS`, 50 ms) into a ring buffer (`WIN`, 6 samples = 0.3 s window); each
-refresh (`DRAW_MS`, 100 ms) drops the min+max sample and averages the rest. Fast
-sampling keeps it responsive while the window + trim keep readings flat and
-spike-free. Widen `WIN` for flatter/slower, shrink for snappier.
+## Temperature Display
+
+The MLX90614 object temperature is sampled every `SAMPLE_MS` and drawn every
+`DRAW_MS` when the displayed value changes enough to matter. Readings use a
+trimmed mean over `WIN` samples to reduce spikes while staying responsive.
+
+Temperature color thresholds are configured in `src/app_config.h`:
+
+- Below `TEMP_COLOR_GREEN_MIN_F`: blue
+- From `TEMP_COLOR_GREEN_MIN_F` up to `TEMP_COLOR_RED_MIN_F`: green
+- Above `TEMP_COLOR_RED_MIN_F`: red
+
+## Debugging
+
+Serial logs include WiFi status transitions, mDNS startup, garage resolve
+results, HTTP failures, garage state transitions, and garage poll failure counts.
+
+Useful symptoms:
+
+- `mDNS queryHost failed, no cached IP`: discovery has not resolved `garage.local`.
+- `HTTP GET failed ... code=-11`: HTTP read timeout. Cached IP is retained.
+- `Poll failure X/3`: garage failure debounce counter before red offline.

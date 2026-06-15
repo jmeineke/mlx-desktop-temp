@@ -3,8 +3,6 @@
 #include <Arduino.h>
 
 struct Door {
-  bool   open;
-  bool   lastOpen;
+  bool open;
   String name;
-  String lastName;
 };

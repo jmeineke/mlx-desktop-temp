@@ -12,4 +12,4 @@ void drawWifiConnectingBar();
 void drawGarageConnectingBar();
 void drawGarageOfflineBar();
 void drawSensorError();
-void drawObjectTemp(float f);
+void drawObjectTemp(float temperatureFahrenheit);

@@ -10,6 +10,10 @@
 namespace {
 bool isBacklightOn = true;
 bool isDoorWakeActive = false;
+Door displayedDoors[2] = {
+  { false, "" },
+  { false, "" },
+};
 
 void handleTouch(uint32_t now) {
   if (!shouldToggleBacklight(now)) {
@@ -32,13 +36,19 @@ void handleStatusBar(uint32_t now) {
   static int32_t lastDisplayedRetrySeconds = -1;
 
   bool isWifiCurrentlyOnline = isWifiOnline();
-  GarageConnectionState currentGarageConnectionState = garageConnectionState;
-  bool doorStateChanged = doors[0].open != doors[0].lastOpen || doors[1].open != doors[1].lastOpen;
-  bool doorNameChanged = doors[0].name != doors[0].lastName || doors[1].name != doors[1].lastName;
-  bool areAllDoorsClosed = !doors[0].open && !doors[1].open;
+  Door currentDoors[2];
+  bool isGarageReady = false;
+  GarageConnectionState currentGarageConnectionState = GARAGE_CONNECTING;
+  getGarageStatusSnapshot(currentDoors, isGarageReady, currentGarageConnectionState);
+
+  bool doorStateChanged = currentDoors[0].open != displayedDoors[0].open ||
+                          currentDoors[1].open != displayedDoors[1].open;
+  bool doorNameChanged = currentDoors[0].name != displayedDoors[0].name ||
+                         currentDoors[1].name != displayedDoors[1].name;
+  bool areAllDoorsClosed = !currentDoors[0].open && !currentDoors[1].open;
   bool garageStatusChanged = doorStateChanged || doorNameChanged;
   bool wifiStateChanged = isWifiCurrentlyOnline != wasWifiOnline;
-  bool garageReadyChanged = garageReady != wasGarageReady;
+  bool garageReadyChanged = isGarageReady != wasGarageReady;
   bool garageConnectionStateChanged = currentGarageConnectionState != previousGarageConnectionState;
 
   if (!isWifiCurrentlyOnline && wifiStateChanged) {
@@ -67,7 +77,7 @@ void handleStatusBar(uint32_t now) {
     drawGarageOfflineBar();
     hasStatusBarBeenDrawn = true;
   } else if (isWifiCurrentlyOnline &&
-             garageReady &&
+             isGarageReady &&
              (!hasStatusBarBeenDrawn || wifiStateChanged || garageReadyChanged || doorStateChanged || doorNameChanged)) {
     if (garageStatusChanged && !isBacklightOn) {
       isBacklightOn = true;
@@ -89,17 +99,15 @@ void handleStatusBar(uint32_t now) {
       }
     }
 
-    drawDoorBar(doors);
-    doors[0].lastOpen = doors[0].open;
-    doors[1].lastOpen = doors[1].open;
-    doors[0].lastName = doors[0].name;
-    doors[1].lastName = doors[1].name;
+    drawDoorBar(currentDoors);
+    displayedDoors[0] = currentDoors[0];
+    displayedDoors[1] = currentDoors[1];
     hasEstablishedGarageBaseline = true;
     hasStatusBarBeenDrawn = true;
   }
 
   wasWifiOnline = isWifiCurrentlyOnline;
-  wasGarageReady = garageReady;
+  wasGarageReady = isGarageReady;
   previousGarageConnectionState = currentGarageConnectionState;
   lastDisplayedRetrySeconds = remainingRetrySeconds;
 }

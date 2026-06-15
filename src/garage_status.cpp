@@ -4,19 +4,22 @@
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <freertos/semphr.h>
 #include "app_config.h"
 
+namespace {
 Door doors[2] = {
-  { false, false, "Door 1", "" },
-  { false, false, "Door 2", "" },
+  { false, "Door 1" },
+  { false, "Door 2" },
 };
 
-volatile bool garageReady = false;
-volatile GarageConnectionState garageConnectionState = GARAGE_CONNECTING;
-
-namespace {
+bool garageReady = false;
+GarageConnectionState garageConnectionState = GARAGE_CONNECTING;
 GarageConnectionState lastLoggedGarageConnectionState = GARAGE_CONNECTING;
 IPAddress lastKnownGarageIp;
+bool hasReceivedGarageStatus = false;
+uint8_t consecutiveGarageFailures = 0;
+SemaphoreHandle_t garageStatusMutex = nullptr;
 
 const char* garageConnectionStateToString(GarageConnectionState state) {
   switch (state) {
@@ -37,28 +40,91 @@ void logGarageConnectionStateIfChanged() {
   lastLoggedGarageConnectionState = garageConnectionState;
 }
 
+void lockGarageStatus() {
+  if (garageStatusMutex != nullptr) {
+    xSemaphoreTake(garageStatusMutex, portMAX_DELAY);
+  }
+}
+
+void unlockGarageStatus() {
+  if (garageStatusMutex != nullptr) {
+    xSemaphoreGive(garageStatusMutex);
+  }
+}
+
+IPAddress getLastKnownGarageIp() {
+  lockGarageStatus();
+  IPAddress ip = lastKnownGarageIp;
+  unlockGarageStatus();
+  return ip;
+}
+
+void setLastKnownGarageIp(IPAddress ip) {
+  lockGarageStatus();
+  lastKnownGarageIp = ip;
+  unlockGarageStatus();
+}
+
+void markGaragePollSucceeded(IPAddress ip, const Door updatedDoors[2]) {
+  lockGarageStatus();
+  doors[0] = updatedDoors[0];
+  doors[1] = updatedDoors[1];
+  lastKnownGarageIp = ip;
+  hasReceivedGarageStatus = true;
+  consecutiveGarageFailures = 0;
+  garageReady = true;
+  garageConnectionState = GARAGE_READY;
+  logGarageConnectionStateIfChanged();
+  unlockGarageStatus();
+}
+
+void markGaragePollFailed(const char* reason, bool clearCachedIp) {
+  lockGarageStatus();
+  if (clearCachedIp) {
+    lastKnownGarageIp = IPAddress();
+  }
+  consecutiveGarageFailures++;
+  Serial.print("[Garage] Poll failure ");
+  Serial.print(consecutiveGarageFailures);
+  Serial.print("/");
+  Serial.print(GARAGE_FAILURES_BEFORE_OFFLINE);
+  Serial.print(" reason=");
+  Serial.println(reason);
+
+  if (consecutiveGarageFailures < GARAGE_FAILURES_BEFORE_OFFLINE) {
+    garageConnectionState = hasReceivedGarageStatus ? GARAGE_READY : GARAGE_CONNECTING;
+    garageReady = hasReceivedGarageStatus;
+  } else {
+    garageReady = false;
+    garageConnectionState = GARAGE_OFFLINE;
+  }
+
+  logGarageConnectionStateIfChanged();
+  unlockGarageStatus();
+}
+
 void garageTask(void *) {
   for (;;) {
     if (DEBUG_DOOR1_OPEN || DEBUG_DOOR2_OPEN) {
-      doors[0] = { DEBUG_DOOR1_OPEN, doors[0].lastOpen, "Joe's door", doors[0].lastName };
-      doors[1] = { DEBUG_DOOR2_OPEN, doors[1].lastOpen, "Elaine's door", doors[1].lastName };
+      lockGarageStatus();
+      doors[0] = { DEBUG_DOOR1_OPEN, "Joe's door" };
+      doors[1] = { DEBUG_DOOR2_OPEN, "Elaine's door" };
       garageReady = true;
       garageConnectionState = GARAGE_READY;
       logGarageConnectionStateIfChanged();
+      unlockGarageStatus();
     } else if (WiFi.status() == WL_CONNECTED) {
-      IPAddress ip = lastKnownGarageIp;
+      IPAddress ip = getLastKnownGarageIp();
       if (ip == IPAddress()) {
         ip = MDNS.queryHost(GARAGE_HOST);
         if (ip == IPAddress()) {
-          garageReady = false;
-          garageConnectionState = GARAGE_OFFLINE;
           Serial.println("[Garage] mDNS queryHost failed, no cached IP");
-          logGarageConnectionStateIfChanged();
+          markGaragePollFailed("mdns", false);
           vTaskDelay(pdMS_TO_TICKS(GARAGE_MS));
           continue;
         }
 
-        lastKnownGarageIp = ip;
+        setLastKnownGarageIp(ip);
         Serial.print("[Garage] Resolved garage.local to ");
         Serial.println(ip);
       }
@@ -72,33 +138,25 @@ void garageTask(void *) {
       if (code == 200) {
         JsonDocument doc;
         if (!deserializeJson(doc, http.getString())) {
-          doors[0].open = doc["single"]["open"].as<bool>();
-          doors[1].open = doc["double"]["open"].as<bool>();
-          doors[0].name = doc["single"]["name"] | "Door 1";
-          doors[1].name = doc["double"]["name"] | "Door 2";
-          lastKnownGarageIp = ip;
-          garageReady = true;
-          garageConnectionState = GARAGE_READY;
-          logGarageConnectionStateIfChanged();
+          Door updatedDoors[2] = {
+            { doc["single"]["open"].as<bool>(), doc["single"]["name"] | "Door 1" },
+            { doc["double"]["open"].as<bool>(), doc["double"]["name"] | "Door 2" },
+          };
+          markGaragePollSucceeded(ip, updatedDoors);
         } else {
-          garageReady = false;
-          garageConnectionState = GARAGE_OFFLINE;
           Serial.println("[Garage] JSON parse failed");
-          logGarageConnectionStateIfChanged();
+          markGaragePollFailed("json", false);
         }
       } else {
-        garageReady = false;
-        garageConnectionState = GARAGE_OFFLINE;
         Serial.print("[Garage] HTTP GET failed url=");
         Serial.print(statusUrl);
         Serial.print(" code=");
         Serial.println(code);
-        if (code != HTTPC_ERROR_READ_TIMEOUT) {
-          lastKnownGarageIp = IPAddress();
-        } else {
+        bool isTimeout = code == HTTPC_ERROR_READ_TIMEOUT;
+        if (isTimeout) {
           Serial.println("[Garage] Keeping cached IP after timeout");
         }
-        logGarageConnectionStateIfChanged();
+        markGaragePollFailed("http", !isTimeout);
       }
       http.end();
     }
@@ -108,12 +166,26 @@ void garageTask(void *) {
 }
 
 void startGarageTask() {
+  garageStatusMutex = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(garageTask, "garage", 8192, nullptr, 1, nullptr, 0);
 }
 
+void getGarageStatusSnapshot(Door snapshotDoors[2], bool &snapshotGarageReady, GarageConnectionState &snapshotConnectionState) {
+  lockGarageStatus();
+  snapshotDoors[0] = doors[0];
+  snapshotDoors[1] = doors[1];
+  snapshotGarageReady = garageReady;
+  snapshotConnectionState = garageConnectionState;
+  unlockGarageStatus();
+}
+
 void markGarageNotReady() {
+  lockGarageStatus();
   garageReady = false;
   garageConnectionState = GARAGE_CONNECTING;
   lastKnownGarageIp = IPAddress();
+  hasReceivedGarageStatus = false;
+  consecutiveGarageFailures = 0;
   logGarageConnectionStateIfChanged();
+  unlockGarageStatus();
 }

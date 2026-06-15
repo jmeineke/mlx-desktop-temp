@@ -9,9 +9,6 @@ enum GarageConnectionState {
   GARAGE_READY
 };
 
-extern Door doors[2];
-extern volatile bool garageReady;
-extern volatile GarageConnectionState garageConnectionState;
-
 void startGarageTask();
+void getGarageStatusSnapshot(Door snapshotDoors[2], bool &snapshotGarageReady, GarageConnectionState &snapshotConnectionState);
 void markGarageNotReady();
