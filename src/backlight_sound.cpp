@@ -14,6 +14,8 @@ struct SoundSequence {
   const uint16_t* noteDurationsMs;
   uint8_t noteCount;
   uint16_t gapMs;
+  uint8_t repeatCount;
+  uint16_t repeatGapMs;
 };
 
 constexpr uint16_t DOOR_CHIME_FREQUENCIES[] = { 1760, 880, 1760, 880 };
@@ -23,6 +25,8 @@ constexpr SoundSequence DOOR_CHIME = {
   DOOR_CHIME_DURATIONS_MS,
   4,
   25,
+  3,
+  200,
 };
 
 constexpr uint16_t WIFI_CHIME_FREQUENCIES[] = { 784, 1047, 1319, 1568 };
@@ -32,6 +36,8 @@ constexpr SoundSequence WIFI_CHIME = {
   WIFI_CHIME_DURATIONS_MS,
   4,
   25,
+  1,
+  0,
 };
 
 QueueHandle_t soundQueue = nullptr;
@@ -45,12 +51,18 @@ const SoundSequence& getSoundSequence(SoundSequenceId sequenceId) {
 }
 
 void playSoundSequence(const SoundSequence& sequence) {
-  for (uint8_t noteIndex = 0; noteIndex < sequence.noteCount; noteIndex++) {
-    ledcWriteTone(SPK_CHANNEL, sequence.noteFrequencies[noteIndex]);
-    vTaskDelay(pdMS_TO_TICKS(sequence.noteDurationsMs[noteIndex]));
-    stopSoundTone();
-    if (noteIndex + 1 < sequence.noteCount) {
-      vTaskDelay(pdMS_TO_TICKS(sequence.gapMs));
+  for (uint8_t repeatIndex = 0; repeatIndex < sequence.repeatCount; repeatIndex++) {
+    for (uint8_t noteIndex = 0; noteIndex < sequence.noteCount; noteIndex++) {
+      ledcWriteTone(SPK_CHANNEL, sequence.noteFrequencies[noteIndex]);
+      vTaskDelay(pdMS_TO_TICKS(sequence.noteDurationsMs[noteIndex]));
+      stopSoundTone();
+      if (noteIndex + 1 < sequence.noteCount) {
+        vTaskDelay(pdMS_TO_TICKS(sequence.gapMs));
+      }
+    }
+
+    if (repeatIndex + 1 < sequence.repeatCount) {
+      vTaskDelay(pdMS_TO_TICKS(sequence.repeatGapMs));
     }
   }
 }
