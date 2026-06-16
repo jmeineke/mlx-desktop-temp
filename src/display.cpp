@@ -20,13 +20,14 @@ void drawBackground() {
 
 void drawDoorBar(const Door doors[2]) {
   display.setTextDatum(MC_DATUM);
-  for (int i = 0; i < 2; i++) {
-    int x = i * 163;
+  for (int displayIndex = 0; displayIndex < 2; displayIndex++) {
+    int doorIndex = 1 - displayIndex;
+    int x = displayIndex * 163;
     int width = 157;
-    uint16_t color = doors[i].open ? TFT_RED : TFT_DARKGREEN;
+    uint16_t color = doors[doorIndex].open ? TFT_RED : TFT_DARKGREEN;
     display.fillRect(x, BAR_Y, width, BAR_H, color);
     display.setTextColor(TFT_WHITE, color);
-    display.drawString(doors[i].name, x + width / 2, BAR_Y + BAR_H / 2, 2);
+    display.drawString(doors[doorIndex].name, x + width / 2, BAR_Y + BAR_H / 2, 2);
   }
   display.fillRect(157, BAR_Y, 6, BAR_H, BG);
 }
